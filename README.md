@@ -14,16 +14,13 @@
 ## Установка
 1. Клонировать репозиторий.
 2. Установить необходимые библиотеки: `pip install -r requirements.txt`
-3. Создать базу данных PostgreSQL и заменить `DB_NAME`, `NAME_USER`, `PASSWORD` в коде на свои данные.
-```commandline
-conn = psycopg2.connect(
-    dbname="DB_NAME",
-    user="NAME_USER",  
-    password="PASSWORD",  
-    host="localhost",
-    port="5432"
-)
-
+3. Нужно создать файл .env и добавить в него конфигурацию PgAdmina
+```
+DB_NAME=your_database_name
+DB_USER=your_database_user
+DB_PASSWORD=your_database_password
+DB_HOST=localhost
+DB_PORT=5432
 ```
 
 ## Использование

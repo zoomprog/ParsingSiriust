@@ -3,10 +3,23 @@ from lxml import html
 import re
 import psycopg2
 import logging
+import os
+from dotenv import load_dotenv
 
 # Настройка логирования
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+# Загрузка переменных окружения из .env
+load_dotenv()
+
+# Получение значений из .env
+DB_NAME = os.getenv("DB_NAME")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_HOST = os.getenv("DB_HOST", "localhost")  # Значение по умолчанию: localhost
+DB_PORT = os.getenv("DB_PORT", "5432")       # Значение по умолчанию: 5432
+
 
 def parse_and_save_to_db(email, password):
     # URL для отправки POST-запроса
@@ -27,8 +40,6 @@ def parse_and_save_to_db(email, password):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         "Referer": "https://siriust.ru/",
-        "Cache-Control": "no-cache",  # Отключаем кэширование
-        "Pragma": "no-cache"  # Отключаем кэширование
     }
 
     # Создаем сессию для сохранения кук после авторизации
@@ -40,6 +51,11 @@ def parse_and_save_to_db(email, password):
 
         # Проверяем результат авторизации
         if response.status_code == 200:
+            # Проверяем наличие сообщения об ошибке в HTML-ответе
+            if "Вы ввели неверный логин или пароль" in response.text:
+                logger.error("Неверный логин или пароль. Пожалуйста, попробуйте еще раз.")
+                return  # Прекращаем выполнение функции
+
             logger.info("Авторизация успешна!")
         else:
             logger.error(f"Ошибка авторизации. Код ошибки: {response.status_code}")
@@ -76,11 +92,11 @@ def parse_and_save_to_db(email, password):
 
         # Подключение к базе данных PostgreSQL
         conn = psycopg2.connect(
-            dbname="DB_NAME",
-            user="NAME_USER",  # Замените на имя пользователя PostgreSQL
-            password="PASSWORD",  # Замените на пароль PostgreSQL
-            host="localhost",
-            port="5432"
+            dbname=DB_NAME,
+            user=DB_USER,  # Замените на имя пользователя PostgreSQL
+            password=DB_PASSWORD,  # Замените на пароль PostgreSQL
+            host=DB_HOST,
+            port=DB_PORT
         )
         cur = conn.cursor()
         conn.set_client_encoding('UTF8')
@@ -148,37 +164,31 @@ def parse_and_save_to_db(email, password):
 
                     if product_page_response.status_code == 200:
                         product_tree = html.fromstring(product_page_response.text)
-
+                        # Название товара
                         h1_title = product_tree.xpath('//h1[@class="ty-product-block-title"]/bdi/text()')
+                        # Розничная цена
                         retail_price = product_tree.xpath('//span[@class="ty-price-num"]/text()')
-                        wholesale_price_container = product_tree.xpath(
-                            '//div[@class="ty-product-block__price-second"]//span[@class="ty-price-num"]/text()'
-                        )
-                        full_stars = product_tree.xpath(
-                            '//div[@class="ty-discussion__rating-wrapper"]//i[@class="ty-stars__icon ty-icon-star"]')
-                        half_star = product_tree.xpath(
-                            '//div[@class="ty-discussion__rating-wrapper"]//i[@class="ty-stars__icon ty-icon-star-half"]')
+                        # Оптовая цена
+                        wholesale_price_container = product_tree.xpath('//div[@class="ty-product-block__price-second"]//span[@class="ty-price-num"]/text()')
+                        # Рейтинг
+                        full_stars = product_tree.xpath('//div[@class="ty-discussion__rating-wrapper"]//i[@class="ty-stars__icon ty-icon-star"]')
+                        half_star = product_tree.xpath('//div[@class="ty-discussion__rating-wrapper"]//i[@class="ty-stars__icon ty-icon-star-half"]')
+                        # Количество отзывов
                         number_reviews = product_tree.xpath('//a[@class="ty-discussion__review-a cm-external-click"]')
-                        store_count = product_tree.xpath(
-                            '//div[@class="ty-product-feature"]//div[@class="ty-product-feature__value"]')
+                        # Доступно в магазинах
+                        store_count = product_tree.xpath('//div[@class="ty-product-feature"]//div[@class="ty-product-feature__value"]')
+                        # Отзывы
                         reviews = product_tree.xpath('//div[@class="ty-discussion-post__message"]/text()')
 
-                        # Очистка данных
                         title = h1_title[0].strip() if h1_title else "Название не найдено"
                         retail_price = retail_price[0].replace('\xa0', '').strip() if retail_price else None
-                        wholesale_price = wholesale_price_container[0].replace('\xa0',
-                                                                               '').strip() if wholesale_price_container else None
+                        wholesale_price = wholesale_price_container[0].replace('\xa0', '').strip() if wholesale_price_container else None
                         rating = len(full_stars) + 0.5 if half_star else len(full_stars)
-                        reviews_count = int(
-                            re.search(r'\d+', number_reviews[0].text.strip()).group()) if number_reviews else 0
-                        available_stores_count = sum(
-                            "мало" in store.text_content() or "достаточно" in store.text_content() or "много" in store.text_content()
-                            for store in store_count
-                        )
+                        reviews_count = int(re.search(r'\d+', number_reviews[0].text.strip()).group()) if number_reviews else 0
+                        available_stores_count = sum("мало" in store.text_content() or "достаточно" in store.text_content() or "много" in store.text_content() for store in store_count)
 
                         # Проверка существования товара
-                        cur.execute("SELECT id FROM товары WHERE название = %s AND пользователь_id = %s;",
-                                    (title, user_id))
+                        cur.execute("SELECT id FROM товары WHERE название = %s AND пользователь_id = %s;", (title, user_id))
                         existing_product = cur.fetchone()
 
                         if existing_product:
@@ -201,8 +211,7 @@ def parse_and_save_to_db(email, password):
 
                             if cleaned_review:
                                 # Проверка существования отзыва
-                                cur.execute("SELECT id FROM отзывы WHERE текст_отзыва = %s AND товар_id = %s;",
-                                            (cleaned_review, product_id))
+                                cur.execute("SELECT id FROM отзывы WHERE текст_отзыва = %s AND товар_id = %s;", (cleaned_review, product_id))
                                 existing_review = cur.fetchone()
 
                                 if existing_review:
